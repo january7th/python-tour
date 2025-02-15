@@ -3,8 +3,10 @@ import os
 def download_youtube_video(url, output_path='.'):
     os.makedirs(output_path, exist_ok=True)
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        # 'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
         'outtmpl': f'{output_path}/%(title)s.%(ext)s',
+        'noplaylist': False
     }
 
     try:
