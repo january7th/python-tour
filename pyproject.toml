@@ -1,0 +1,15 @@
+[project]
+name = "python-tour"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "docxtpl>=0.20.2",
+    "odfpy>=1.4.1",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.4",
+    "requests>=2.34.2",
+    "selenium>=4.45.0",
+    "yt-dlp>=2026.6.9",
+]

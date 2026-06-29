@@ -1,1 +1,1 @@
-LOS_SUPPORT_URL = "https://uat-los-support.shbfinance.com.vn/login"
+LOS_SUPPORT_URL = "https://uat-los-support.sfinance.com.vn/login"
