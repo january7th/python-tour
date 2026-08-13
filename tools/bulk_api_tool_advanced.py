@@ -1,4 +1,5 @@
 
+from datetime import datetime
 from pathlib import Path
 import queue
 import re
@@ -6,6 +7,7 @@ import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import json, csv, threading
+from uuid import uuid4
 import requests
 from openpyxl import Workbook, load_workbook
 from odf.opendocument import load as load_ods
@@ -13,6 +15,18 @@ from odf.table import Table, TableRow, TableCell
 from odf.text import P
 
 PLACEHOLDER = re.compile(r"\{([a-zA-Z0-9_]+)\}")
+IGNORE_FIELD_KEYWORDS = (
+    "base64",
+    "content",
+)
+
+def should_ignore_field(key):
+    key = str(key).lower()
+
+    return any(
+        keyword in key
+        for keyword in IGNORE_FIELD_KEYWORDS
+    )
 
 def replace_placeholders(value, row):
     if isinstance(value, str):
@@ -31,6 +45,48 @@ def replace_placeholders(value, row):
         }
 
     return value
+
+def flatten_json(data, parent_key=""):
+    result = {}
+
+    if isinstance(data, dict):
+
+        for key, value in data.items():
+
+            if should_ignore_field(key):
+                continue
+
+            new_key = (
+                f"{parent_key}.{key}"
+                if parent_key
+                else str(key)
+            )
+
+            if isinstance(value, (dict, list)):
+                result.update(
+                    flatten_json(value, new_key)
+                )
+            else:
+                result[new_key] = value
+
+    elif isinstance(data, list):
+
+        for index, value in enumerate(data):
+
+            new_key = f"{parent_key}[{index}]"
+
+            if isinstance(value, (dict, list)):
+                result.update(
+                    flatten_json(value, new_key)
+                )
+            else:
+                result[new_key] = value
+
+    else:
+        if not should_ignore_field(parent_key):
+            result[parent_key] = data
+
+    return result
 
 class BulkApiTool:
     def __init__(self, root):
@@ -158,21 +214,48 @@ class BulkApiTool:
         url = replace_placeholders(self.url.get(), payload)
         self._log(f"W{idx} | {self.method.get()} {url}")
         
-        kwargs = {
-            "method": self.method.get(),
-            "url": url,
-            "headers": headers,
-            "timeout": 120,
-        }
-        
-        if self.method.get().upper() not in ("GET", "DELETE"):
-            kwargs["json"] = payload
-
         try:
+            kwargs = {
+                "method": self.method.get(),
+                "url": url,
+                "headers": headers,
+                "timeout": 120,
+            }
+            
+            if self.method.get().upper() not in ("GET", "DELETE"):
+                kwargs["json"] = payload
+
             resp = requests.request(**kwargs)
-            return [idx, resp.status_code, resp.text[:5000]]
+            try:
+                response_data = resp.json()
+            except ValueError:
+                response_data = {
+                    "_response": resp.text[:5000]
+                }
+
+            payload_flat = flatten_json(payload)
+            response_flat = flatten_json(response_data)
+
+            result = {
+                **payload_flat,
+                "_status": resp.status_code,
+                **{
+                    f"response.{key}": value
+                    for key, value in response_flat.items()
+                }
+            }
+
+            return [idx, result]
+        
         except Exception as e:
-            return [idx, "ERROR", str(e)]
+            return [
+                idx,
+                {
+                    **payload,
+                    "_status": "ERROR",
+                    "_response": str(e)
+                }
+            ]
 
     def run(self):
         threading.Thread(target=self._run, daemon=True).start()
@@ -242,7 +325,7 @@ class BulkApiTool:
 
             elif item["type"] == "success":
 
-                row = item["row"]
+                idx, row = item["row"]
 
                 self.rows.append(row)
                 
@@ -251,17 +334,34 @@ class BulkApiTool:
                 self.progress_label.config(
                     text=f"{self.completed_jobs}/{self.total_jobs}"
                 )
+                
+                status = row.get("_status", "UNKNOWN")
+
                 self._log(
                     f"✅ W{item['worker']} | "
-                    f"{row[1]} | "
+                    f"#{idx} | "
+                    f"{status} | "
                     f"{item['elapsed']:.2f}s"
                 )
 
+                # Hiển thị kết quả
                 self.result.insert(
                     tk.END,
-                    f"#{row[0]} | {row[1]}\n"
-                    f"{row[2]}\n"
-                    f"{'-'*80}\n"
+                    f"#{idx} | Status: {status}\n"
+                )
+
+                for key, value in row.items():
+                    if key == "_status":
+                        continue
+
+                    self.result.insert(
+                        tk.END,
+                        f"{key}: {value}\n"
+                    )
+
+                self.result.insert(
+                    tk.END,
+                    f"{'-' * 80}\n"
                 )
 
                 self.result.see(tk.END)
@@ -344,11 +444,36 @@ class BulkApiTool:
 
         wb = Workbook()
         ws = wb.active
-        ws.append(["RequestNo", "Status", "Response"])
-        for r in self.rows:
-            ws.append(r)
 
-        p = filedialog.asksaveasfilename(defaultextension=".xlsx")
+        # Giữ thứ tự column xuất hiện đầu tiên
+        columns = []
+
+        for row in self.rows:
+            for key in row.keys():
+                if key not in columns:
+                    columns.append(key)
+
+        ws.append(columns)
+
+        for row in self.rows:
+            ws.append([
+                row.get(column, "")
+                for column in columns
+            ])
+
+        default_filename = (
+            f"result_"
+            f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+            f"{uuid4().hex[:6]}.xlsx"
+        )
+
+        p = filedialog.asksaveasfilename(
+            title="Export Results",
+            defaultextension=".xlsx",
+            initialfile=default_filename,
+            filetypes=[("Excel files", "*.xlsx")]
+        )
+
         if p:
             wb.save(p)
             messagebox.showinfo("Done", "Exported")
